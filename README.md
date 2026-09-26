@@ -66,11 +66,25 @@ contrôles, puis `lftp mirror` en **FTPS** vers o2switch à chaque push sur
 `main`, puis vérification des URL en ligne. Lancement manuel possible en
 mode simulation (`dry_run`).
 
-À renseigner dans *Settings → Secrets and variables → Actions* :
+Hôte et chemin sont **préremplis dans le workflow** (une variable du dépôt
+du même nom les remplace si besoin) :
 
-| Nom | Type | Exemple |
+| Nom | Valeur | Pourquoi |
 |---|---|---|
-| `DEPLOY_FTP_HOST` | variable ou secret | nom d'hôte FTPS o2switch couvert par le certificat |
-| `DEPLOY_FTP_PATH` | variable ou secret | `/mayetlab.fr` (dossier du site, **pas** la racine cPanel) |
-| `DEPLOY_FTP_USER` | secret | compte FTP dédié au site |
-| `DEPLOY_FTP_PASSWORD` | secret | sans virgule |
+| `DEPLOY_FTP_HOST` | `filao.o2switch.net` | serveur o2switch de mayetlab.fr (109.234.166.10), nom couvert par le certificat FTPS |
+| `DEPLOY_FTP_PATH` | `/` | compte FTP dédié, verrouillé sur le dossier de mayetlab.fr |
+
+Seuls deux **secrets** restent à créer dans *Settings → Secrets and
+variables → Actions → Secrets* :
+
+| Nom | Valeur |
+|---|---|
+| `DEPLOY_FTP_USER` | identifiant du compte FTP dédié (cPanel → Comptes FTP, répertoire = dossier de mayetlab.fr) |
+| `DEPLOY_FTP_PASSWORD` | son mot de passe — **sans virgule** |
+
+Essai à blanc : Actions → Déploiement → Run workflow → « Simuler ». La
+simulation se connecte, vérifie le certificat et la cible, et annonce ce
+qu'elle transférerait et supprimerait, sans rien écrire.
+
+> `mirror --delete` remplace tout le contenu du dossier cible : l'ancien
+> site Hugo (css/, js/, img/…) sera supprimé au premier déploiement réel.

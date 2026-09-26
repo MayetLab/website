@@ -4,11 +4,19 @@
 # Même chaîne que francoisfournier.fr : pas d'étape de construction,
 # public/ est envoyé tel quel par lftp (mirror) en FTPS.
 #
-# Secrets / variables du dépôt (Settings → Secrets and variables → Actions) :
-#   DEPLOY_FTP_HOST      (variable ou secret) nom d'hôte FTPS o2switch
-#   DEPLOY_FTP_PATH      (variable ou secret) dossier du site, ex. /mayetlab.fr
-#   DEPLOY_FTP_USER      (secret) compte FTP dédié au site
-#   DEPLOY_FTP_PASSWORD  (secret) sans virgule — lftp la lit comme séparateur
+# Valeurs non secrètes, préremplies ci-dessous (une variable du dépôt du
+# même nom, si elle existe, l'emporte) :
+#   DEPLOY_FTP_HOST  filao.o2switch.net — le serveur o2switch qui héberge
+#                    mayetlab.fr (même IP, 109.234.166.10) et dont le
+#                    certificat FTPS couvre ce nom. Même serveur que
+#                    francoisfournier.fr.
+#   DEPLOY_FTP_PATH  /  — suppose un compte FTP dédié, verrouillé sur le
+#                    dossier racine de mayetlab.fr. Si le compte voit la
+#                    racine cPanel, le garde-fou plus bas refuse d'écrire.
+#
+# Secrets à créer (Settings → Secrets and variables → Actions → Secrets) :
+#   DEPLOY_FTP_USER      compte FTP dédié au site
+#   DEPLOY_FTP_PASSWORD  sans virgule — lftp la lit comme séparateur
 # ──────────────────────────────────────────────────────────────────────
 
 name: Déploiement
@@ -80,17 +88,15 @@ jobs:
       - name: Déployer sur o2switch (FTPS)
         env:
           DRY_RUN: ${{ inputs.dry_run }}
-          FTP_HOST: ${{ vars.DEPLOY_FTP_HOST || secrets.DEPLOY_FTP_HOST }}
-          FTP_PATH: ${{ vars.DEPLOY_FTP_PATH || secrets.DEPLOY_FTP_PATH }}
+          FTP_HOST: ${{ vars.DEPLOY_FTP_HOST || 'filao.o2switch.net' }}
+          FTP_PATH: ${{ vars.DEPLOY_FTP_PATH || '/' }}
           FTP_USER: ${{ secrets.DEPLOY_FTP_USER }}
           FTP_PASSWORD: ${{ secrets.DEPLOY_FTP_PASSWORD }}
         run: |
           set -euo pipefail
 
-          [ -n "${FTP_HOST:-}" ] || {
-            echo "::error::DEPLOY_FTP_HOST n'est pas renseigné." >&2; exit 1; }
-          [ -n "${FTP_PATH:-}" ] || {
-            echo "::error::DEPLOY_FTP_PATH n'est pas renseigné." >&2; exit 1; }
+          [ -n "${FTP_USER:-}" ] && [ -n "${FTP_PASSWORD:-}" ] || {
+            echo "::error::Secrets DEPLOY_FTP_USER et DEPLOY_FTP_PASSWORD à créer dans Settings → Secrets and variables → Actions." >&2; exit 1; }
 
           case "$FTP_PASSWORD" in
             *,*) echo "::error::Le mot de passe FTP contient une virgule, que lftp interprète comme séparateur. Régénérez-le sans virgule." >&2
