@@ -1,0 +1,191 @@
+# ──────────────────────────────────────────────────────────────────────
+# mayetlab.fr — contrôles et déploiement FTPS sur o2switch
+#
+# Même chaîne que francoisfournier.fr : pas d'étape de construction,
+# public/ est envoyé tel quel par lftp (mirror) en FTPS.
+#
+# Valeurs non secrètes, préremplies ci-dessous (une variable du dépôt du
+# même nom, si elle existe, l'emporte) :
+#   DEPLOY_FTP_HOST  filao.o2switch.net — le serveur o2switch qui héberge
+#                    mayetlab.fr (même IP, 109.234.166.10) et dont le
+#                    certificat FTPS couvre ce nom. Même serveur que
+#                    francoisfournier.fr.
+#   DEPLOY_FTP_PATH  /  — suppose un compte FTP dédié, verrouillé sur le
+#                    dossier racine de mayetlab.fr. Si le compte voit la
+#                    racine cPanel, le garde-fou plus bas refuse d'écrire.
+#
+# Secrets à créer (Settings → Secrets and variables → Actions → Secrets) :
+#   DEPLOY_FTP_USER      compte FTP dédié au site
+#   DEPLOY_FTP_PASSWORD  sans virgule — lftp la lit comme séparateur
+# ──────────────────────────────────────────────────────────────────────
+
+name: Déploiement
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "public/**"
+      - "tools/**"
+      - ".github/workflows/deploy.yml"
+  pull_request:
+    paths:
+      - "public/**"
+      - "tools/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Simuler : se connecter et contrôler, sans rien écrire"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  controles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Aucune ressource ne doit venir d'un domaine tiers (polices, scripts,
+      # iframes) : le site ne dépose ni cookie ni traceur, et le dit.
+      - name: Vérifier l'absence de ressource tierce
+        run: python3 tools/check-third-party.py public
+
+      - name: Vérifier les liens internes
+        run: python3 tools/check-links.py public
+
+      - name: Vérifier la compatibilité avec la CSP déployée
+        run: python3 tools/check-csp.py public public/.htaccess
+
+      - name: Vérifier les redirections
+        run: python3 tools/check-redirects.py public/.htaccess
+
+      # Le bulletin d'adhésion papier imprime ces adresses.
+      - name: Vérifier les documents imprimés sur le bulletin
+        run: |
+          for f in status.pdf reglement.pdf adhesion.pdf; do
+            [ -f "public/$f" ] || { echo "::error::public/$f manquant — le bulletin papier pointe vers /$f." >&2; exit 1; }
+          done
+
+  deploiement:
+    needs: controles
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Déployer sur o2switch (FTPS)
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          FTP_HOST: ${{ vars.DEPLOY_FTP_HOST || 'filao.o2switch.net' }}
+          FTP_PATH: ${{ vars.DEPLOY_FTP_PATH || '/' }}
+          FTP_USER: ${{ secrets.DEPLOY_FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.DEPLOY_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          [ -n "${FTP_USER:-}" ] && [ -n "${FTP_PASSWORD:-}" ] || {
+            echo "::error::Secrets DEPLOY_FTP_USER et DEPLOY_FTP_PASSWORD à créer dans Settings → Secrets and variables → Actions." >&2; exit 1; }
+
+          case "$FTP_PASSWORD" in
+            *,*) echo "::error::Le mot de passe FTP contient une virgule, que lftp interprète comme séparateur. Régénérez-le sans virgule." >&2
+                 exit 1 ;;
+          esac
+
+          [ -f public/index.html ] || {
+            echo "::error::public/index.html absent." >&2; exit 1; }
+
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lftp
+
+          REGLAGES="
+            set ftp:ssl-force true;
+            set ftp:ssl-protect-data true;
+            set ssl:verify-certificate true;
+            set net:max-retries 3;
+            set net:timeout 20;
+          "
+
+          # Le serveur FTP d'un mutualisé présente le certificat du serveur,
+          # pas celui du domaine : on vérifie que le nom utilisé est couvert.
+          echo "Certificat présenté par le serveur FTPS :"
+          NOMS=$(echo | openssl s_client -starttls ftp -connect "$FTP_HOST:21" \
+                   -servername "$FTP_HOST" 2>/dev/null \
+                 | openssl x509 -noout -subject -ext subjectAltName 2>/dev/null \
+                 | grep -oE '[A-Za-z0-9*._-]+\.[A-Za-z]{2,}' | sort -u || true)
+          if [ -z "$NOMS" ]; then
+            echo "::warning::Impossible de lire le certificat — lftp tranchera."
+          else
+            echo "$NOMS" | sed 's/^/    /'
+            if ! echo "$NOMS" | grep -qxF -- "$FTP_HOST" \
+               && ! echo "$NOMS" | grep -qxF -- "*.${FTP_HOST#*.}"; then
+              echo "::error::Le certificat FTPS ne couvre pas le nom d'hôte utilisé. Remplacez DEPLOY_FTP_HOST par l'un des noms listés ci-dessus." >&2
+              exit 1
+            fi
+          fi
+
+          # mirror --delete efface tout ce qui n'est pas dans public/. Si la
+          # cible est la racine du compte cPanel plutôt que celle du site,
+          # il emporterait la messagerie et les autres sites.
+          echo "Inspection de '$FTP_PATH'…"
+          CIBLE=$(lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp://$FTP_HOST" \
+                    -e "$REGLAGES cls -1 '$FTP_PATH'; bye")
+          echo "$CIBLE" | sed 's/^/    /'
+          for INTERDIT in mail etc logs ssl tmp public_html .cpanel .trash; do
+            if echo "$CIBLE" | sed 's#/$##' | grep -qx "$INTERDIT"; then
+              echo "::error::La cible contient '$INTERDIT' : c'est la racine du compte cPanel, pas celle d'un site." >&2
+              exit 1
+            fi
+          done
+
+          SIMULATION=""
+          if [ "${DRY_RUN:-}" = "true" ]; then
+            SIMULATION="--dry-run"
+            echo "::notice::Simulation — rien ne sera écrit."
+          fi
+
+          # -a : mirror ignore les fichiers cachés par défaut, dont .htaccess.
+          lftp -u "$FTP_USER,$FTP_PASSWORD" "ftp://$FTP_HOST" -e "
+            $REGLAGES
+            mirror --reverse --delete -a $SIMULATION --parallel=4 --verbose public '$FTP_PATH';
+            bye
+          "
+
+      - name: Récapitulatif
+        run: |
+          echo "### Déploiement mayetlab.fr" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Pages : $(find public -name '*.html' | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "Poids total : $(du -sh public | cut -f1)" >> $GITHUB_STEP_SUMMARY
+
+      # Un mirror réussi ne prouve rien sur ce que voit un visiteur
+      # (redirection en boucle, .htaccess refusé, AutoSSL pas prêt…).
+      - name: Vérifier le site en ligne
+        if: github.event_name != 'workflow_dispatch' || inputs.dry_run != true
+        run: |
+          echo "Attente de la propagation…"
+          sleep 20
+          ECHECS=0
+          for CHEMIN in / /legal/ /status.pdf /reglement.pdf /adhesion.pdf /assets/site.css /assets/og.jpg /robots.txt; do
+            URL="https://mayetlab.fr$CHEMIN"
+            CODE=$(curl -sS -L --max-redirs 5 --max-time 25 \
+                     -o /dev/null -w '%{http_code}' "$URL" || echo "000")
+            if [ "$CODE" = "200" ]; then
+              echo "  $CODE  $CHEMIN"
+            else
+              echo "::error::$URL répond $CODE (attendu 200)"
+              ECHECS=$((ECHECS + 1))
+            fi
+          done
+          [ "$ECHECS" -eq 0 ] || exit 1
