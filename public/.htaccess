@@ -1,0 +1,60 @@
+# ──────────────────────────────────────────────────────────────────────
+# mayetlab.fr — configuration Apache (o2switch)
+#
+# Les URL propres viennent de l'arborescence — /legal/ est un dossier
+# contenant index.html — et non d'une réécriture.
+#
+# /status.pdf, /reglement.pdf et /adhesion.pdf restent à la racine : le
+# bulletin d'adhésion papier imprime ces adresses. Ne pas les déplacer.
+# ──────────────────────────────────────────────────────────────────────
+
+RewriteEngine on
+RewriteOptions inherit
+
+# HTTPS partout.
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# www → domaine nu.
+RewriteCond %{HTTP_HOST} ^www\.mayetlab\.fr$ [NC]
+RewriteRule ^ https://mayetlab.fr%{REQUEST_URI} [R=301,L]
+
+# Ancien site Hugo : flux RSS et /legal sans barre finale.
+Redirect 301 /index.xml https://mayetlab.fr/
+Redirect 301 /legal.html https://mayetlab.fr/legal/
+
+# /index.html ne peut pas passer par Redirect : Apache associe « / » à
+# index.html avant mod_alias, la règle bouclerait sur l'accueil.
+# %{THE_REQUEST} ne correspond qu'à une demande réelle de /index.html.
+RewriteCond %{THE_REQUEST} \s/index\.html[\s?] [NC]
+RewriteRule ^index\.html$ https://mayetlab.fr/ [R=301,L]
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/png        "access plus 1 month"
+  ExpiresByType image/jpeg       "access plus 1 month"
+  ExpiresByType image/x-icon     "access plus 1 month"
+  ExpiresByType font/woff2       "access plus 1 year"
+  ExpiresByType text/css         "access plus 1 week"
+  ExpiresByType application/pdf  "access plus 1 week"
+  ExpiresByType text/html        "access plus 1 hour"
+</IfModule>
+
+AddType font/woff2 .woff2
+
+# ──────────────────────────────────────────────────────────────────────
+# En-têtes de sécurité.
+#
+# Aucune exception tierce : le site ne charge rien de l'extérieur (voir
+# tools/check-third-party.py) et n'a aucun script. Les données JSON-LD
+# sont un bloc de données, que la CSP n'exécute pas et ne bloque pas.
+# ──────────────────────────────────────────────────────────────────────
+
+<IfModule mod_headers.c>
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests"
+  Header always set Strict-Transport-Security "max-age=31536000"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()"
+  Header always set X-Frame-Options "DENY"
+</IfModule>
