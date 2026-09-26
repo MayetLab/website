@@ -20,7 +20,10 @@ Site de l'association MayetLab. Voir README.md pour le contexte.
   `<span class="visuellement-cache"> (nouvel onglet)</span>` dans le lien,
   pour ne pas perdre le visiteur et l'annoncer aux lecteurs d'écran. La
   flèche ↗ est ajoutée par le CSS.
-- **Adhésion** : campagne HelloAsso `devenir-membre-2027` ; les adhésions
-  2025-2026 sont reportées sur 2027 (faux départ de 2025).
+- **Adhésion** : toujours lier `https://adhesions.mayetlab.fr/`, jamais la
+  page HelloAsso directement. Ce sous-domaine redirige vers la campagne de
+  l'année en cours (réglée chaque année côté o2switch), et il est imprimé
+  sur le bulletin papier. Les adhésions 2025-2026 sont reportées sur 2027
+  (faux départ de 2025).
 - Accessibilité : garder les contrastes AA (jetons en tête de site.css),
   les `alt`, le lien d'évitement et le respect de `prefers-reduced-motion`.
